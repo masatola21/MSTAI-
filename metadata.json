@@ -1,0 +1,6 @@
+{
+  "name": "MyAI Studio - 自分専用AIクリエイター",
+  "description": "あなた好みの性格・口調・記憶を持った自分だけの専属AIアシスタントを簡単に作成・カスタマイズできる対話型スタジオ。",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
