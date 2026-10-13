@@ -14,8 +14,10 @@ import {
   BrainCircuit,
   CornerDownLeft,
   RefreshCw,
+  ClipboardList,
+  Target,
 } from 'lucide-react';
-import { CharacterConfig, ChatMessage, UserProfile } from '../types';
+import { CharacterConfig, ChatMessage, UserProfile, ProposedPlan } from '../types';
 import { ChatMessageContent } from './ChatMessageContent';
 import { getColorScheme } from '../utils/theme';
 
@@ -29,6 +31,7 @@ interface ChatViewProps {
   onUpdateUserProfile: (profile: UserProfile) => void;
   isStreaming: boolean;
   onStopStreaming: () => void;
+  onOpenPlanProposal?: (plan: ProposedPlan) => void;
 }
 
 export const ChatView: React.FC<ChatViewProps> = ({
@@ -41,6 +44,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
   onUpdateUserProfile,
   isStreaming,
   onStopStreaming,
+  onOpenPlanProposal,
 }) => {
   const [inputText, setInputText] = useState('');
   const [ttsEnabled, setTtsEnabled] = useState(false);
@@ -350,7 +354,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
               {character.suggestedTopics && character.suggestedTopics.length > 0 && (
                 <div className="space-y-2">
                   <div className="text-xs font-bold text-slate-400 uppercase tracking-wider text-center">
-                    話しかけるきっかけ・おすすめの話題
+                    話しかけるきっかけ・おすすめの指示
                   </div>
                   <div className="flex flex-wrap items-center justify-center gap-2">
                     {character.suggestedTopics.map((topic, i) => (
@@ -396,7 +400,10 @@ export const ChatView: React.FC<ChatViewProps> = ({
                     {isUser ? (
                       <p className="text-sm md:text-[15px] whitespace-pre-wrap leading-relaxed">{msg.content}</p>
                     ) : (
-                      <ChatMessageContent content={msg.content} />
+                      <ChatMessageContent
+                        content={msg.content}
+                        onOpenPlanProposal={onOpenPlanProposal}
+                      />
                     )}
                   </div>
 
@@ -447,7 +454,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
                 <span className="w-2 h-2 rounded-full bg-indigo-400 animate-bounce" style={{ animationDelay: '0ms' }} />
                 <span className="w-2 h-2 rounded-full bg-indigo-400 animate-bounce" style={{ animationDelay: '150ms' }} />
                 <span className="w-2 h-2 rounded-full bg-indigo-400 animate-bounce" style={{ animationDelay: '300ms' }} />
-                <span className="text-xs text-slate-400 ml-1.5 font-medium">{character.name} が考え中…</span>
+                <span className="text-xs text-slate-400 ml-1.5 font-medium">{character.name} が思考中…</span>
               </div>
             </div>
           )}
@@ -458,17 +465,43 @@ export const ChatView: React.FC<ChatViewProps> = ({
 
       {/* Input Box Bottom Bar */}
       <div className="border-t border-slate-800/80 bg-slate-900/90 p-3 sm:p-4 backdrop-blur-md">
-        <div className="max-w-4xl mx-auto">
-          {/* Quick profile notice / context hint */}
-          <div className="flex items-center justify-between px-2 mb-2 text-[11px] text-slate-400">
-            <div className="flex items-center gap-2 truncate">
-              <span>{character.name} と対話中</span>
-              {character.speechStyle && <span className="text-slate-500">• 口調: {character.speechStyle}</span>}
-              {userProfile.userName && <span className="text-indigo-400">• あなた: {userProfile.userName}</span>}
-            </div>
-            <div className="hidden sm:block text-slate-500">
-              Shift + Enter で改行 / Enter で送信
-            </div>
+        <div className="max-w-4xl mx-auto space-y-2">
+          {/* Quick AI President Action Chips */}
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-[11px] no-scrollbar">
+            <span className="text-slate-400 shrink-0 font-semibold">クイック指示:</span>
+            <button
+              type="button"
+              onClick={() =>
+                setInputText(
+                  '次の経営目標を達成するためのプロジェクト概要と具体的タスク一覧（目的、優先度、完了条件、担当案）を計画立案してください：\n「新規顧客獲得のためのプロモーション施策」'
+                )
+              }
+              className="px-2.5 py-1 rounded-lg bg-indigo-500/15 hover:bg-indigo-500/25 text-indigo-300 border border-indigo-500/30 shrink-0 transition-colors cursor-pointer"
+            >
+              ⚡ 目標のタスク分解を依頼
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                setInputText(
+                  '現在のプロジェクト状況を踏まえ、今週最優先で着手すべきタスクとその理由を教えてください。'
+                )
+              }
+              className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-750 text-slate-300 border border-slate-700 shrink-0 transition-colors cursor-pointer"
+            >
+              📊 今週の優先タスク確認
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                setInputText(
+                  '開発エージェントや各専門AIに割り当てるべき開発要件の定義をサポートしてください。'
+                )
+              }
+              className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-750 text-slate-300 border border-slate-700 shrink-0 transition-colors cursor-pointer"
+            >
+              ⚙️ 開発タスクの切り出し相談
+            </button>
           </div>
 
           <form onSubmit={handleSubmit} className="relative flex items-end gap-2 bg-slate-950 rounded-2xl border border-slate-800 focus-within:border-indigo-500/60 focus-within:ring-2 focus-within:ring-indigo-500/20 transition-all p-1.5 shadow-lg">
@@ -478,7 +511,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
               value={inputText}
               onChange={handleTextareaChange}
               onKeyDown={handleKeyDown}
-              placeholder={`${character.name} に話しかけてみましょう...`}
+              placeholder={`${character.name} に経営指示・タスク相談を入力してください...`}
               disabled={isStreaming}
               className="w-full resize-none bg-transparent px-3 py-2 text-sm md:text-[15px] text-slate-100 placeholder-slate-500 focus:outline-none min-h-[44px] max-h-[180px] leading-relaxed disabled:opacity-50"
             />

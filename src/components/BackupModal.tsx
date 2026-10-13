@@ -1,15 +1,35 @@
 import React, { useState } from 'react';
-import { Download, Upload, Copy, Check, RotateCcw, X, FileText } from 'lucide-react';
-import { CharacterConfig, UserProfile } from '../types';
+import { Download, Upload, Copy, Check, RotateCcw, X, FileText, Database } from 'lucide-react';
+import {
+  CharacterConfig,
+  UserProfile,
+  Project,
+  TaskItem,
+  ApprovalItem,
+  ActivityLog,
+} from '../types';
 import { PRESET_CHARACTERS } from '../data/presets';
-import { DEFAULT_USER_PROFILE } from '../utils/storage';
+import { DEFAULT_USER_PROFILE, DEFAULT_TOP_GOAL } from '../utils/storage';
 
 interface BackupModalProps {
   isOpen: boolean;
   onClose: () => void;
   characters: CharacterConfig[];
   userProfile: UserProfile;
-  onRestoreData: (chars: CharacterConfig[], profile: UserProfile) => void;
+  projects: Project[];
+  tasks: TaskItem[];
+  approvals: ApprovalItem[];
+  activityLogs: ActivityLog[];
+  topGoal: string;
+  onRestoreData: (data: {
+    characters: CharacterConfig[];
+    userProfile: UserProfile;
+    projects: Project[];
+    tasks: TaskItem[];
+    approvals: ApprovalItem[];
+    activityLogs: ActivityLog[];
+    topGoal: string;
+  }) => void;
 }
 
 export const BackupModal: React.FC<BackupModalProps> = ({
@@ -17,6 +37,11 @@ export const BackupModal: React.FC<BackupModalProps> = ({
   onClose,
   characters,
   userProfile,
+  projects,
+  tasks,
+  approvals,
+  activityLogs,
+  topGoal,
   onRestoreData,
 }) => {
   const [copied, setCopied] = useState(false);
@@ -27,8 +52,13 @@ export const BackupModal: React.FC<BackupModalProps> = ({
 
   const currentExportJson = JSON.stringify(
     {
-      version: '1.0',
+      version: '2.0',
       exportedAt: new Date().toISOString(),
+      topGoal,
+      projects,
+      tasks,
+      approvals,
+      activityLogs,
       characters,
       userProfile,
     },
@@ -47,7 +77,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `myai-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    a.download = `ai-president-backup-${new Date().toISOString().slice(0, 10)}.json`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -55,11 +85,30 @@ export const BackupModal: React.FC<BackupModalProps> = ({
   const handleImport = () => {
     try {
       const parsed = JSON.parse(importText);
-      if (!parsed.characters || !Array.isArray(parsed.characters)) {
-        throw new Error('JSONに有効な characters 配列が含まれていません。');
-      }
-      onRestoreData(parsed.characters, parsed.userProfile || DEFAULT_USER_PROFILE);
-      setImportStatus('✅ データのインポートに成功しました！');
+
+      // Backward compatible restoration
+      const restoredChars =
+        Array.isArray(parsed.characters) && parsed.characters.length > 0
+          ? parsed.characters
+          : characters;
+      const restoredProfile = parsed.userProfile || DEFAULT_USER_PROFILE;
+      const restoredProjects = Array.isArray(parsed.projects) ? parsed.projects : projects;
+      const restoredTasks = Array.isArray(parsed.tasks) ? parsed.tasks : tasks;
+      const restoredApprovals = Array.isArray(parsed.approvals) ? parsed.approvals : approvals;
+      const restoredLogs = Array.isArray(parsed.activityLogs) ? parsed.activityLogs : activityLogs;
+      const restoredGoal = parsed.topGoal || topGoal || DEFAULT_TOP_GOAL;
+
+      onRestoreData({
+        characters: restoredChars,
+        userProfile: restoredProfile,
+        projects: restoredProjects,
+        tasks: restoredTasks,
+        approvals: restoredApprovals,
+        activityLogs: restoredLogs,
+        topGoal: restoredGoal,
+      });
+
+      setImportStatus('✅ データのインポートと復元に成功しました！');
       setTimeout(() => {
         setImportStatus(null);
         onClose();
@@ -70,19 +119,31 @@ export const BackupModal: React.FC<BackupModalProps> = ({
   };
 
   const handleResetToDefaults = () => {
-    if (window.confirm('初期プリセットにリセットしますか？現在のカスタマイズ内容は失われます。')) {
-      onRestoreData(PRESET_CHARACTERS, DEFAULT_USER_PROFILE);
+    if (
+      window.confirm(
+        '初期状態にリセットしますか？作成したプロジェクトやタスク、カスタマイズ内容は失われます。'
+      )
+    ) {
+      onRestoreData({
+        characters: PRESET_CHARACTERS,
+        userProfile: DEFAULT_USER_PROFILE,
+        projects: [],
+        tasks: [],
+        approvals: [],
+        activityLogs: [],
+        topGoal: DEFAULT_TOP_GOAL,
+      });
       onClose();
     }
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in">
+    <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in">
       <div className="w-full max-w-xl rounded-3xl bg-slate-900 border border-slate-800 shadow-2xl p-6 space-y-5">
         <div className="flex items-center justify-between border-b border-slate-800 pb-3">
           <div className="flex items-center gap-2 text-white font-bold text-base">
-            <Download className="w-5 h-5 text-indigo-400" />
-            <span>データ管理・バックアップ & インポート</span>
+            <Database className="w-5 h-5 text-indigo-400" />
+            <span>全データ管理・バックアップ & インポート</span>
           </div>
           <button
             type="button"
@@ -96,7 +157,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
         {/* Export Section */}
         <div className="space-y-2">
           <label className="block text-xs font-bold text-indigo-300 uppercase tracking-wider">
-            1. 作成したAIと記憶のエクスポート
+            1. 全データ（目標・PJ・タスク・承認履歴・AI設定）のエクスポート
           </label>
           <div className="flex gap-2">
             <button
@@ -121,7 +182,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
         {/* Import Section */}
         <div className="space-y-2 pt-2 border-t border-slate-800">
           <label className="block text-xs font-bold text-indigo-300 uppercase tracking-wider">
-            2. JSONから復元・インポート
+            2. JSONから復元・インポート (旧形式互換対応)
           </label>
           <textarea
             rows={4}
@@ -155,7 +216,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
             className="text-rose-400 hover:text-rose-300 flex items-center gap-1 font-semibold cursor-pointer"
           >
             <RotateCcw className="w-3.5 h-3.5" />
-            <span>初期プリセットにリセット</span>
+            <span>初期状態にリセット</span>
           </button>
         </div>
       </div>
