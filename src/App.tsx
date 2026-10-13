@@ -15,6 +15,7 @@ import { UserProfileEditor } from './components/UserProfileEditor';
 import { PresetsView } from './components/PresetsView';
 import { BackupModal } from './components/BackupModal';
 import { PlanRegistrationModal } from './components/PlanRegistrationModal';
+import { PricingSettingsModal } from './components/PricingSettingsModal';
 import {
   CharacterConfig,
   UserProfile,
@@ -26,6 +27,9 @@ import {
   ProposedPlan,
   Priority,
   TaskAssignee,
+  ModelPricingRate,
+  TokenUsageRecord,
+  ApiUsageData,
 } from './types';
 import {
   loadCharacters,
@@ -47,6 +51,11 @@ import {
   recordActivityLog,
   loadTopGoal,
   saveTopGoal,
+  loadPricingRates,
+  savePricingRates,
+  loadTokenUsageRecords,
+  saveTokenUsageRecords,
+  recordTokenUsage,
 } from './utils/storage';
 import { PRESET_CHARACTERS } from './data/presets';
 
@@ -62,12 +71,17 @@ export default function App() {
   const [tasks, setTasks] = useState<TaskItem[]>(() => loadTasks());
   const [approvals, setApprovals] = useState<ApprovalItem[]>(() => loadApprovals());
   const [activityLogs, setActivityLogs] = useState<ActivityLog[]>(() => loadActivityLogs());
+  const [pricingRates, setPricingRates] = useState<ModelPricingRate[]>(() => loadPricingRates());
+  const [tokenUsageRecords, setTokenUsageRecords] = useState<TokenUsageRecord[]>(() =>
+    loadTokenUsageRecords()
+  );
 
   // --- UI Navigation & Modals ---
   const [activeTab, setActiveTab] = useState<AppTab>('dashboard');
   const [selectedProjectIdForTasks, setSelectedProjectIdForTasks] = useState<string | null>(null);
   const [activePlanForModal, setActivePlanForModal] = useState<ProposedPlan | null>(null);
   const [isBackupOpen, setIsBackupOpen] = useState(false);
+  const [isPricingModalOpen, setIsPricingModalOpen] = useState(false);
 
   // --- Chat & Streaming ---
   const [messages, setMessages] = useState<ChatMessage[]>(() =>
@@ -170,6 +184,35 @@ export default function App() {
     saveUserProfile(newProfile);
   };
 
+  // --- Token Usage Recording ---
+  const handleRecordUsage = (params: {
+    endpoint: 'chat' | 'generate-character' | 'extract-memory' | 'refine-prompt';
+    endpointName: string;
+    model?: string;
+    usage: ApiUsageData;
+  }) => {
+    recordTokenUsage(params);
+    setTokenUsageRecords(loadTokenUsageRecords());
+  };
+
+  // --- Pricing Settings ---
+  const handleSavePricingRates = (newRates: ModelPricingRate[]) => {
+    setPricingRates(newRates);
+    savePricingRates(newRates);
+    const activeRate = newRates[0];
+    recordActivityLog(
+      'pricing_updated',
+      `AIモデル単価設定が更新されました (${activeRate.currency}: 入力 ${activeRate.inputPricePerMillion ?? '未設定'} / 出力 ${activeRate.outputPricePerMillion ?? '未設定'})`,
+      '人間'
+    );
+    setActivityLogs(loadActivityLogs());
+  };
+
+  const handleClearUsageRecords = () => {
+    saveTokenUsageRecords([]);
+    setTokenUsageRecords([]);
+  };
+
   // --- Projects Operations ---
   const handleCreateProject = (projectData: Omit<Project, 'id' | 'createdAt' | 'updatedAt'>) => {
     const newProject: Project = {
@@ -253,7 +296,6 @@ export default function App() {
   };
 
   const handleRequestApproval = (task: TaskItem, reason: string) => {
-    // 1. Update task to pending_approval
     const updatedTask: TaskItem = {
       ...task,
       status: 'pending_approval',
@@ -263,7 +305,6 @@ export default function App() {
     setTasks(updatedTasks);
     saveTasks(updatedTasks);
 
-    // 2. Create approval item
     const newApproval: ApprovalItem = {
       id: `appr-${Date.now()}`,
       taskId: task.id,
@@ -303,7 +344,6 @@ export default function App() {
     setApprovals(updatedApprovals);
     saveApprovals(updatedApprovals);
 
-    // If approved and has associated task, set task status to completed!
     if (targetApproval.taskId) {
       const updatedTasks = tasks.map((t) => {
         if (t.id === targetApproval.taskId) {
@@ -343,7 +383,6 @@ export default function App() {
       assignee: TaskAssignee;
     }[]
   ) => {
-    // 1. Create Project
     const newProjectId = `proj-${Date.now()}`;
     const newProject: Project = {
       id: newProjectId,
@@ -359,7 +398,6 @@ export default function App() {
     setProjects(updatedProjects);
     saveProjects(updatedProjects);
 
-    // 2. Create Tasks
     const newTasks: TaskItem[] = proposedTasks.map((t, idx) => ({
       id: `task-${Date.now()}-${idx}`,
       projectId: newProjectId,
@@ -376,7 +414,6 @@ export default function App() {
     setTasks(updatedTasksList);
     saveTasks(updatedTasksList);
 
-    // 3. Activity Log
     recordActivityLog(
       'plan_imported',
       `AI社長の提案計画を承認し、プロジェクト「${projectName}」と${newTasks.length}件のタスクを登録しました`,
@@ -384,7 +421,6 @@ export default function App() {
     );
     setActivityLogs(loadActivityLogs());
 
-    // Switch to projects or tasks tab
     setSelectedProjectIdForTasks(newProjectId);
     setActiveTab('projects');
   };
@@ -415,6 +451,13 @@ export default function App() {
 
     const assistantMsgId = `assistant-${Date.now()}`;
     let accumulatedContent = '';
+    let streamUsage: ApiUsageData = {
+      promptTokens: null,
+      candidatesTokens: null,
+      totalTokens: null,
+      status: 'unacquired',
+    };
+    let responseModel = 'gemini-3.8-flash';
 
     setMessages((prev) => [
       ...prev,
@@ -474,7 +517,11 @@ export default function App() {
             }
             try {
               const parsed = JSON.parse(dataStr);
-              if (parsed.text) {
+              // Handle special usage metadata payload
+              if (parsed.type === 'usage' && parsed.usage) {
+                streamUsage = parsed.usage;
+                if (parsed.model) responseModel = parsed.model;
+              } else if (parsed.text) {
                 accumulatedContent += parsed.text;
                 setMessages((prev) =>
                   prev.map((m) =>
@@ -495,6 +542,14 @@ export default function App() {
           }
         }
       }
+
+      // Record Chat Token Usage in LocalStorage
+      handleRecordUsage({
+        endpoint: 'chat',
+        endpointName: 'AI社長チャット',
+        model: responseModel,
+        usage: streamUsage,
+      });
 
       const finalHistory = [
         ...newHistory,
@@ -524,6 +579,18 @@ export default function App() {
           )
         );
       }
+      // Record unacquired usage on error
+      handleRecordUsage({
+        endpoint: 'chat',
+        endpointName: 'AI社長チャット',
+        model: responseModel,
+        usage: {
+          promptTokens: null,
+          candidatesTokens: null,
+          totalTokens: null,
+          status: 'unacquired',
+        },
+      });
     } finally {
       setIsStreaming(false);
       activeAbortController.current = null;
@@ -562,6 +629,9 @@ export default function App() {
             tasks={tasks}
             approvals={approvals}
             activityLogs={activityLogs}
+            tokenUsageRecords={tokenUsageRecords}
+            pricingRates={pricingRates}
+            onOpenPricingSettings={() => setIsPricingModalOpen(true)}
             onNavigateTab={setActiveTab}
             onResolveApproval={(id, status) => handleResolveApproval(id, status)}
           />
@@ -580,6 +650,7 @@ export default function App() {
             isStreaming={isStreaming}
             onStopStreaming={handleStopStreaming}
             onOpenPlanProposal={(plan) => setActivePlanForModal(plan)}
+            onRecordUsage={handleRecordUsage}
           />
         )}
 
@@ -634,6 +705,7 @@ export default function App() {
               handleSelectCharacter(char.id);
               setActiveTab('chat');
             }}
+            onRecordUsage={handleRecordUsage}
           />
         )}
 
@@ -675,6 +747,16 @@ export default function App() {
         />
       )}
 
+      {/* Pricing Settings & Token Usage Details Modal */}
+      <PricingSettingsModal
+        isOpen={isPricingModalOpen}
+        onClose={() => setIsPricingModalOpen(false)}
+        pricingRates={pricingRates}
+        tokenUsageRecords={tokenUsageRecords}
+        onSavePricingRates={handleSavePricingRates}
+        onClearUsageRecords={handleClearUsageRecords}
+      />
+
       {/* Full Backup & Restore Modal */}
       <BackupModal
         isOpen={isBackupOpen}
@@ -686,6 +768,8 @@ export default function App() {
         approvals={approvals}
         activityLogs={activityLogs}
         topGoal={topGoal}
+        pricingRates={pricingRates}
+        tokenUsageRecords={tokenUsageRecords}
         onRestoreData={(data) => {
           handleUpdateCharacters(data.characters);
           handleUpdateUserProfile(data.userProfile);
@@ -699,6 +783,14 @@ export default function App() {
           saveActivityLogs(data.activityLogs);
           setTopGoal(data.topGoal);
           saveTopGoal(data.topGoal);
+          if (data.pricingRates) {
+            setPricingRates(data.pricingRates);
+            savePricingRates(data.pricingRates);
+          }
+          if (data.tokenUsageRecords) {
+            setTokenUsageRecords(data.tokenUsageRecords);
+            saveTokenUsageRecords(data.tokenUsageRecords);
+          }
           if (data.characters.length > 0) {
             handleSelectCharacter(data.characters[0].id);
           }

@@ -7,6 +7,9 @@ import {
   ApprovalItem,
   ActivityLog,
   ActivityActionType,
+  ModelPricingRate,
+  TokenUsageRecord,
+  ApiUsageData,
 } from '../types';
 import { PRESET_CHARACTERS } from '../data/presets';
 
@@ -20,6 +23,8 @@ const STORAGE_KEYS = {
   APPROVALS: 'myai_approvals_v1',
   ACTIVITY_LOGS: 'myai_activity_logs_v1',
   TOP_GOAL: 'myai_top_goal_v1',
+  PRICING_RATES: 'myai_pricing_rates_v1',
+  TOKEN_USAGE: 'myai_token_usage_v1',
 };
 
 export const DEFAULT_USER_PROFILE: UserProfile = {
@@ -34,7 +39,18 @@ export const DEFAULT_USER_PROFILE: UserProfile = {
 export const DEFAULT_TOP_GOAL =
   'AI社長と連携し、事業目標を確実なタスクへ分解してチームの実行力を最大化する';
 
-// --- Sample Initial Data (明確にサンプルと明記) ---
+// 公式公表価格目安（100万トークンあたり: 入力 ¥75, 出力 ¥300 ※$1=150円換算ベース目安）
+export const DEFAULT_PRICING_RATES: ModelPricingRate[] = [
+  {
+    model: 'gemini-3.8-flash',
+    currency: 'JPY',
+    inputPricePerMillion: 75,
+    outputPricePerMillion: 300,
+    updatedAt: 1775000000000,
+  },
+];
+
+// --- Sample Initial Data ---
 const INITIAL_SAMPLE_PROJECTS: Project[] = [
   {
     id: 'sample-proj-1',
@@ -146,7 +162,6 @@ export function loadCharacters(): CharacterConfig[] {
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed) && parsed.length > 0) {
-        // If preset-ceo is not in saved characters, prepend it
         if (!parsed.some((c: CharacterConfig) => c.id === 'preset-ceo')) {
           const ceo = PRESET_CHARACTERS.find((c) => c.id === 'preset-ceo');
           if (ceo) {
@@ -179,7 +194,6 @@ export function loadActiveCharacterId(characters: CharacterConfig[]): string {
   } catch (e) {
     console.error(e);
   }
-  // Default to AI CEO if present
   if (characters.some((c) => c.id === 'preset-ceo')) {
     return 'preset-ceo';
   }
@@ -278,7 +292,6 @@ export function loadProjects(): Project[] {
   } catch (e) {
     console.error('Failed to load projects from localStorage', e);
   }
-  // 初期値として例示用プロジェクトを提供
   return INITIAL_SAMPLE_PROJECTS;
 }
 
@@ -359,7 +372,6 @@ export function loadActivityLogs(): ActivityLog[] {
 
 export function saveActivityLogs(logs: ActivityLog[]): void {
   try {
-    // Keep last 100 logs
     const trimmed = logs.slice(0, 100);
     localStorage.setItem(STORAGE_KEYS.ACTIVITY_LOGS, JSON.stringify(trimmed));
   } catch (e) {
@@ -387,17 +399,182 @@ export function recordActivityLog(
   return newLog;
 }
 
+// --- Model Pricing Rates Storage ---
+
+export function loadPricingRates(): ModelPricingRate[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.PRICING_RATES);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed;
+      }
+    }
+  } catch (e) {
+    console.error('Failed to load pricing rates from localStorage', e);
+  }
+  return DEFAULT_PRICING_RATES;
+}
+
+export function savePricingRates(rates: ModelPricingRate[]): void {
+  try {
+    localStorage.setItem(STORAGE_KEYS.PRICING_RATES, JSON.stringify(rates));
+  } catch (e) {
+    console.error('Failed to save pricing rates to localStorage', e);
+  }
+}
+
+// --- Token Usage Records Storage ---
+
+export function loadTokenUsageRecords(): TokenUsageRecord[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.TOKEN_USAGE);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return parsed;
+      }
+    }
+  } catch (e) {
+    console.error('Failed to load token usage records from localStorage', e);
+  }
+  return [];
+}
+
+export function saveTokenUsageRecords(records: TokenUsageRecord[]): void {
+  try {
+    // Keep last 300 records to prevent LocalStorage bloat
+    const trimmed = records.slice(0, 300);
+    localStorage.setItem(STORAGE_KEYS.TOKEN_USAGE, JSON.stringify(trimmed));
+  } catch (e) {
+    console.error('Failed to save token usage records to localStorage', e);
+  }
+}
+
+// 呼び出し単位で使用量を記録する
+export function recordTokenUsage(params: {
+  endpoint: 'chat' | 'generate-character' | 'extract-memory' | 'refine-prompt';
+  endpointName: string;
+  model?: string;
+  usage: ApiUsageData;
+}): TokenUsageRecord {
+  const modelName = params.model || 'gemini-3.8-flash';
+  const pricingRates = loadPricingRates();
+  const activeRate = pricingRates.find((r) => r.model === modelName) || pricingRates[0];
+
+  let estimatedCost: number | null = null;
+  let rateSnapshot: TokenUsageRecord['rateSnapshot'] = undefined;
+
+  if (activeRate) {
+    rateSnapshot = {
+      currency: activeRate.currency,
+      inputPricePerMillion: activeRate.inputPricePerMillion,
+      outputPricePerMillion: activeRate.outputPricePerMillion,
+      rateUpdatedAt: activeRate.updatedAt,
+    };
+
+    // 単価が設定されており、かつ使用量が取得できている場合のみ料金目安を計算
+    if (
+      params.usage.status === 'acquired' &&
+      activeRate.inputPricePerMillion !== null &&
+      activeRate.outputPricePerMillion !== null
+    ) {
+      const promptTokens = params.usage.promptTokens ?? 0;
+      const candidatesTokens = params.usage.candidatesTokens ?? 0;
+      const inputCost = (promptTokens / 1_000_000) * activeRate.inputPricePerMillion;
+      const outputCost = (candidatesTokens / 1_000_000) * activeRate.outputPricePerMillion;
+      estimatedCost = inputCost + outputCost;
+    }
+  }
+
+  const newRecord: TokenUsageRecord = {
+    id: `usage-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+    timestamp: Date.now(),
+    endpoint: params.endpoint,
+    endpointName: params.endpointName,
+    model: modelName,
+    status: params.usage.status,
+    promptTokens: params.usage.promptTokens,
+    candidatesTokens: params.usage.candidatesTokens,
+    totalTokens: params.usage.totalTokens,
+    rateSnapshot,
+    estimatedCost,
+  };
+
+  const currentRecords = loadTokenUsageRecords();
+  const updatedRecords = [newRecord, ...currentRecords];
+  saveTokenUsageRecords(updatedRecords);
+
+  return newRecord;
+}
+
+// 今月のトークン数・料金目安の集計ヘルパー
+export function getMonthlyTokenSummary(records: TokenUsageRecord[], targetDate: Date = new Date()) {
+  const currentYear = targetDate.getFullYear();
+  const currentMonth = targetDate.getMonth();
+
+  const monthlyRecords = records.filter((r) => {
+    const d = new Date(r.timestamp);
+    return d.getFullYear() === currentYear && d.getMonth() === currentMonth;
+  });
+
+  let totalPromptTokens = 0;
+  let totalCandidatesTokens = 0;
+  let totalTokens = 0;
+  let totalEstimatedCost = 0;
+  let acquiredCallCount = 0;
+  let unacquiredCallCount = 0;
+  let hasValidPricing = false;
+  let currency: 'JPY' | 'USD' = 'JPY';
+
+  for (const r of monthlyRecords) {
+    if (r.status === 'acquired') {
+      acquiredCallCount++;
+      totalPromptTokens += r.promptTokens ?? 0;
+      totalCandidatesTokens += r.candidatesTokens ?? 0;
+      totalTokens += r.totalTokens ?? 0;
+
+      if (r.estimatedCost !== null && r.estimatedCost !== undefined) {
+        totalEstimatedCost += r.estimatedCost;
+        hasValidPricing = true;
+        if (r.rateSnapshot?.currency) {
+          currency = r.rateSnapshot.currency;
+        }
+      }
+    } else {
+      unacquiredCallCount++;
+    }
+  }
+
+  return {
+    year: currentYear,
+    month: currentMonth + 1,
+    totalPromptTokens,
+    totalCandidatesTokens,
+    totalTokens,
+    totalEstimatedCost: hasValidPricing ? totalEstimatedCost : null,
+    currency,
+    acquiredCallCount,
+    unacquiredCallCount,
+    unacquiredCount: unacquiredCallCount,
+    totalCalls: monthlyRecords.length,
+    monthlyRecords,
+  };
+}
+
 // --- Export All Data (Full Backup & Backward Compatible) ---
 
 export function exportAllData(): string {
   const data = {
-    version: '2.0',
+    version: '2.1',
     exportedAt: new Date().toISOString(),
     topGoal: loadTopGoal(),
     projects: loadProjects(),
     tasks: loadTasks(),
     approvals: loadApprovals(),
     activityLogs: loadActivityLogs(),
+    pricingRates: loadPricingRates(),
+    tokenUsage: loadTokenUsageRecords(),
     characters: loadCharacters(),
     userProfile: loadUserProfile(),
   };

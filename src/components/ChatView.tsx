@@ -17,7 +17,7 @@ import {
   ClipboardList,
   Target,
 } from 'lucide-react';
-import { CharacterConfig, ChatMessage, UserProfile, ProposedPlan } from '../types';
+import { CharacterConfig, ChatMessage, UserProfile, ProposedPlan, ApiUsageData } from '../types';
 import { ChatMessageContent } from './ChatMessageContent';
 import { getColorScheme } from '../utils/theme';
 
@@ -32,6 +32,12 @@ interface ChatViewProps {
   isStreaming: boolean;
   onStopStreaming: () => void;
   onOpenPlanProposal?: (plan: ProposedPlan) => void;
+  onRecordUsage?: (params: {
+    endpoint: 'chat' | 'generate-character' | 'extract-memory' | 'refine-prompt';
+    endpointName: string;
+    model?: string;
+    usage: ApiUsageData;
+  }) => void;
 }
 
 export const ChatView: React.FC<ChatViewProps> = ({
@@ -45,6 +51,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
   isStreaming,
   onStopStreaming,
   onOpenPlanProposal,
+  onRecordUsage,
 }) => {
   const [inputText, setInputText] = useState('');
   const [ttsEnabled, setTtsEnabled] = useState(false);
@@ -182,6 +189,16 @@ export const ChatView: React.FC<ChatViewProps> = ({
         }),
       });
       const data = await res.json();
+
+      if (data.usage && onRecordUsage) {
+        onRecordUsage({
+          endpoint: 'extract-memory',
+          endpointName: '記憶抽出',
+          model: data.model || 'gemini-3.8-flash',
+          usage: data.usage,
+        });
+      }
+
       if (data.newNotes && data.newNotes.trim()) {
         const updatedNotes = userProfile.userNotes
           ? `${userProfile.userNotes}\n${data.newNotes.trim()}`

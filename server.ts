@@ -49,6 +49,27 @@ interface CharacterConfig {
   responseLength?: 'short' | 'medium' | 'detailed';
 }
 
+function extractUsage(usageMetadata: any) {
+  if (
+    !usageMetadata ||
+    usageMetadata.totalTokenCount === undefined ||
+    usageMetadata.totalTokenCount === null
+  ) {
+    return {
+      promptTokens: null,
+      candidatesTokens: null,
+      totalTokens: null,
+      status: 'unacquired',
+    };
+  }
+  return {
+    promptTokens: usageMetadata.promptTokenCount ?? null,
+    candidatesTokens: usageMetadata.candidatesTokenCount ?? null,
+    totalTokens: usageMetadata.totalTokenCount ?? null,
+    status: 'acquired',
+  };
+}
+
 function buildSystemInstruction(char: CharacterConfig): string {
   const parts: string[] = [];
 
@@ -118,7 +139,6 @@ app.post('/api/chat', async (req, res) => {
     });
 
     // Format contents for Gemini
-    // Convert to contents array with role 'user' and 'model'
     const contents = messages.map((m: { role: string; content: string }) => ({
       role: m.role === 'assistant' || m.role === 'model' ? 'model' : 'user',
       parts: [{ text: m.content || '' }],
@@ -138,11 +158,25 @@ app.post('/api/chat', async (req, res) => {
         },
       });
 
+      let latestUsageMetadata = null;
+
       for await (const chunk of responseStream) {
+        if (chunk.usageMetadata) {
+          latestUsageMetadata = chunk.usageMetadata;
+        }
         if (chunk.text) {
           res.write(`data: ${JSON.stringify({ text: chunk.text })}\n\n`);
         }
       }
+
+      // ストリーム完了後に使用量情報を専用のSSEイベントとして送信
+      res.write(
+        `data: ${JSON.stringify({
+          type: 'usage',
+          usage: extractUsage(latestUsageMetadata),
+          model: 'gemini-3.8-flash',
+        })}\n\n`
+      );
 
       res.write(`data: [DONE]\n\n`);
       res.end();
@@ -157,7 +191,8 @@ app.post('/api/chat', async (req, res) => {
       });
 
       const text = response.text || '';
-      return res.json({ text });
+      const usage = extractUsage(response.usageMetadata);
+      return res.json({ text, usage, model: 'gemini-3.8-flash' });
     }
   } catch (err: any) {
     console.error('Error in /api/chat:', err);
@@ -225,13 +260,15 @@ ${userProfile ? `【ユーザー自身の情報】:\n- 名前: ${userProfile.use
       },
     });
 
+    const usage = extractUsage(response.usageMetadata);
+
     let rawText = response.text || '{}';
     // Remove markdown code fence if present
     rawText = rawText.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '').trim();
 
     try {
       const parsed = JSON.parse(rawText);
-      return res.json(parsed);
+      return res.json({ ...parsed, _usage: usage, _model: 'gemini-3.8-flash' });
     } catch (parseErr) {
       console.error('Failed to parse generated character JSON:', rawText);
       // Fallback
@@ -250,6 +287,8 @@ ${userProfile ? `【ユーザー自身の情報】:\n- 名前: ${userProfile.use
         responseLength: 'medium',
         greetingMessage: 'こんにちは！あなたの専属アシスタントです。どんなことでも気軽に相談してくださいね！',
         suggestedTopics: ['今日のタスクを整理したい', '新しいアイデアの相談', '気分転換におしゃべり'],
+        _usage: usage,
+        _model: 'gemini-3.8-flash',
       });
     }
   } catch (err: any) {
@@ -290,11 +329,13 @@ ${conversationText}
       },
     });
 
+    const usage = extractUsage(response.usageMetadata);
     const text = response.text?.trim() || '';
+
     if (text.includes('なし') && text.length < 15) {
-      return res.json({ newNotes: '' });
+      return res.json({ newNotes: '', usage, model: 'gemini-3.8-flash' });
     }
-    return res.json({ newNotes: text });
+    return res.json({ newNotes: text, usage, model: 'gemini-3.8-flash' });
   } catch (err: any) {
     console.error('Error in /api/extract-memory:', err);
     return res.status(500).json({ error: err.message || '記憶抽出に失敗しました。' });
@@ -326,7 +367,13 @@ app.post('/api/refine-prompt', async (req, res) => {
       },
     });
 
-    return res.json({ enhancedInstruction: response.text || '' });
+    const usage = extractUsage(response.usageMetadata);
+
+    return res.json({
+      enhancedInstruction: response.text || '',
+      usage,
+      model: 'gemini-3.8-flash',
+    });
   } catch (err: any) {
     console.error('Error in /api/refine-prompt:', err);
     return res.status(500).json({ error: err.message || 'プロンプト改善に失敗しました。' });

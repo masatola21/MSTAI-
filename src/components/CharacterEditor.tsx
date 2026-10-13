@@ -13,7 +13,7 @@ import {
   Lightbulb,
   ArrowRight,
 } from 'lucide-react';
-import { CharacterConfig, AvatarColor, UserProfile } from '../types';
+import { CharacterConfig, AvatarColor, UserProfile, ApiUsageData } from '../types';
 import { getColorScheme } from '../utils/theme';
 
 interface CharacterEditorProps {
@@ -23,6 +23,12 @@ interface CharacterEditorProps {
   onDeleteCharacter: (id: string) => void;
   onDuplicateCharacter: (char: CharacterConfig) => void;
   onStartChat: (char: CharacterConfig) => void;
+  onRecordUsage?: (params: {
+    endpoint: 'chat' | 'generate-character' | 'extract-memory' | 'refine-prompt';
+    endpointName: string;
+    model?: string;
+    usage: ApiUsageData;
+  }) => void;
 }
 
 const EMOJI_PALETTE = ['🌟', '💼', '⚡', '☕', '🔥', '💡', '🐱', '🌸', '🦾', '🦉', '🎨', '🧪', '🛡️', '🌙', '🍵', '🚀', '🦊', '✨'];
@@ -53,6 +59,7 @@ export const CharacterEditor: React.FC<CharacterEditorProps> = ({
   onDeleteCharacter,
   onDuplicateCharacter,
   onStartChat,
+  onRecordUsage,
 }) => {
   const [formData, setFormData] = useState<CharacterConfig>({ ...character });
   const [activeSubTab, setActiveSubTab] = useState<'magic' | 'manual'>('magic');
@@ -79,6 +86,15 @@ export const CharacterEditor: React.FC<CharacterEditorProps> = ({
 
       if (!res.ok) throw new Error('生成に失敗しました');
       const data = await res.json();
+
+      if (data._usage && onRecordUsage) {
+        onRecordUsage({
+          endpoint: 'generate-character',
+          endpointName: 'キャラクター生成',
+          model: data._model || 'gemini-3.8-flash',
+          usage: data._usage,
+        });
+      }
 
       setFormData((prev) => ({
         ...prev,
@@ -120,6 +136,16 @@ export const CharacterEditor: React.FC<CharacterEditorProps> = ({
         body: JSON.stringify({ character: formData }),
       });
       const data = await res.json();
+
+      if (data.usage && onRecordUsage) {
+        onRecordUsage({
+          endpoint: 'refine-prompt',
+          endpointName: 'プロンプト改善',
+          model: data.model || 'gemini-3.8-flash',
+          usage: data.usage,
+        });
+      }
+
       if (data.enhancedInstruction) {
         setFormData((prev) => ({
           ...prev,

@@ -16,6 +16,7 @@ import {
   MessageSquare,
   PlusCircle,
   FileText,
+  Settings,
 } from 'lucide-react';
 import {
   Project,
@@ -24,7 +25,10 @@ import {
   ActivityLog,
   Priority,
   TaskStatus,
+  TokenUsageRecord,
+  ModelPricingRate,
 } from '../types';
+import { getMonthlyTokenSummary } from '../utils/storage';
 
 interface DashboardViewProps {
   topGoal: string;
@@ -33,6 +37,9 @@ interface DashboardViewProps {
   tasks: TaskItem[];
   approvals: ApprovalItem[];
   activityLogs: ActivityLog[];
+  tokenUsageRecords: TokenUsageRecord[];
+  pricingRates: ModelPricingRate[];
+  onOpenPricingSettings: () => void;
   onNavigateTab: (tab: 'chat' | 'projects' | 'tasks' | 'approvals') => void;
   onResolveApproval: (id: string, status: 'approved' | 'rejected') => void;
 }
@@ -44,6 +51,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   tasks,
   approvals,
   activityLogs,
+  tokenUsageRecords,
+  pricingRates,
+  onOpenPricingSettings,
   onNavigateTab,
   onResolveApproval,
 }) => {
@@ -64,6 +74,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const completedTasks = tasks.filter((t) => t.status === 'completed');
   const blockedTasks = tasks.filter((t) => t.status === 'blocked');
   const pendingApprovals = approvals.filter((a) => a.status === 'pending');
+
+  // Token & Cost Metrics for Current Month
+  const monthlySummary = getMonthlyTokenSummary(tokenUsageRecords);
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-6">
@@ -246,23 +259,112 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
       </div>
 
-      {/* API Cost Metric (条件厳守: 取得できない場合は未計測と表示し、推定値を実績のように見せない) */}
-      <div className="p-4 rounded-2xl bg-slate-900/60 border border-slate-800/80 flex items-center justify-between flex-wrap gap-3">
-        <div className="flex items-center gap-2.5">
-          <div className="p-2 rounded-xl bg-slate-800 text-slate-400">
-            <Coins className="w-4 h-4" />
+      {/* AI Token Usage & Estimated Cost Card (条件厳守: 今月のトークン数と料金目安、請求確定額との区別明記) */}
+      <div className="p-5 rounded-3xl bg-slate-900 border border-slate-800 shadow-md space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 rounded-2xl bg-amber-500/15 border border-amber-500/30 text-amber-400">
+              <Coins className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="text-sm font-bold text-white">AI API利用量・今月の料金目安</h3>
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 font-medium">
+                  {monthlySummary.year}年{monthlySummary.month}月
+                </span>
+                {monthlySummary.unacquiredCallCount > 0 && (
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300">
+                    未取得: {monthlySummary.unacquiredCallCount}件
+                  </span>
+                )}
+              </div>
+              <p className="text-[11px] text-slate-400 mt-0.5">
+                Gemini APIの応答usage metadataに基づく実測トークン数と設定単価による参考目安
+              </p>
+            </div>
           </div>
-          <div>
-            <div className="text-xs font-bold text-slate-300">AI利用料・APIコスト</div>
-            <div className="text-[11px] text-slate-400">
-              ※ Gemini API 利用枠からの実測値のみ表示するポリシーです
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onOpenPricingSettings}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-750 text-slate-200 text-xs font-semibold border border-slate-700 transition-colors cursor-pointer"
+            >
+              <Settings className="w-3.5 h-3.5 text-indigo-400" />
+              <span>単価設定・履歴詳細</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Metrics Grid */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-1">
+          {/* Monthly Total Tokens */}
+          <div className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800/80">
+            <div className="text-[11px] text-slate-400 font-semibold mb-1">今月の総トークン数</div>
+            <div className="text-xl font-black text-white">
+              {monthlySummary.totalTokens.toLocaleString()}{' '}
+              <span className="text-xs font-normal text-slate-400">tokens</span>
+            </div>
+            <div className="text-[10px] text-slate-500 mt-0.5">
+              入力: {monthlySummary.totalPromptTokens.toLocaleString()} / 出力:{' '}
+              {monthlySummary.totalCandidatesTokens.toLocaleString()}
+            </div>
+          </div>
+
+          {/* Estimated Cost */}
+          <div className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800/80">
+            <div className="text-[11px] text-slate-400 font-semibold mb-1">料金目安</div>
+            <div className="text-xl font-black text-emerald-400">
+              {monthlySummary.totalEstimatedCost !== null ? (
+                <>
+                  {monthlySummary.currency === 'USD' ? '$' : '¥'}
+                  {monthlySummary.totalEstimatedCost < 0.01 && monthlySummary.totalEstimatedCost > 0
+                    ? monthlySummary.totalEstimatedCost.toFixed(4)
+                    : monthlySummary.totalEstimatedCost.toFixed(2)}
+                </>
+              ) : (
+                <span className="text-amber-400 text-base font-bold">料金未設定</span>
+              )}
+            </div>
+            <div className="text-[10px] text-slate-500 mt-0.5">
+              {monthlySummary.totalEstimatedCost !== null ? 'API使用量からの料金目安' : '単価を設定すると計算されます'}
+            </div>
+          </div>
+
+          {/* Call Count */}
+          <div className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800/80">
+            <div className="text-[11px] text-slate-400 font-semibold mb-1">API呼出回数</div>
+            <div className="text-xl font-black text-slate-200">
+              {monthlySummary.totalCalls.toLocaleString()}{' '}
+              <span className="text-xs font-normal text-slate-400">回</span>
+            </div>
+            <div className="text-[10px] text-slate-500 mt-0.5">
+              取得済: {monthlySummary.acquiredCallCount}件 / 未取得: {monthlySummary.unacquiredCallCount}件
+            </div>
+          </div>
+
+          {/* Active Pricing Snapshot */}
+          <div className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800/80 flex flex-col justify-between">
+            <div className="text-[11px] text-slate-400 font-semibold mb-1">適用中の基準単価 (1M)</div>
+            {pricingRates[0]?.inputPricePerMillion !== null ? (
+              <div className="text-xs font-bold text-slate-200 leading-snug">
+                入: {pricingRates[0]?.currency === 'USD' ? '$' : '¥'}
+                {pricingRates[0]?.inputPricePerMillion} / 出: {pricingRates[0]?.currency === 'USD' ? '$' : '¥'}
+                {pricingRates[0]?.outputPricePerMillion}
+              </div>
+            ) : (
+              <div className="text-xs font-bold text-amber-400">単価未設定</div>
+            )}
+            <div className="text-[10px] text-slate-500 mt-1">
+              更新日: {new Date(pricingRates[0]?.updatedAt || Date.now()).toLocaleDateString('ja-JP')}
             </div>
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-bold px-3 py-1 rounded-full bg-slate-800 text-slate-300 border border-slate-700">
-            未計測 (外部API経由の料金集計未連携)
-          </span>
+
+        {/* Legal / Policy Disclaimer Notice (条件厳守: 請求確定額と区別、無料枠適用判定不可) */}
+        <div className="px-3 py-2 rounded-xl bg-slate-950/70 border border-slate-800/60 text-[11px] text-slate-400 leading-relaxed">
+          <span className="text-amber-400 font-semibold">【表記に関するご案内】</span>{' '}
+          本画面に表示される金額は、API応答に含まれるトークン数と登録単価から算出した【API使用量からの料金目安】であり、Google Cloud / Google AI Studioの請求確定額とは区別されます。プロジェクトの無料枠やプロモーション適用有無は外部APIから判定できないため、実際の請求額を示すものではありません。
         </div>
       </div>
 

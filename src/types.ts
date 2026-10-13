@@ -101,7 +101,8 @@ export type ActivityActionType =
   | 'project_updated'
   | 'approval_requested'
   | 'approval_resolved'
-  | 'plan_imported';
+  | 'plan_imported'
+  | 'pricing_updated';
 
 export interface ActivityLog {
   id: string;
@@ -109,7 +110,7 @@ export interface ActivityLog {
   actionType: ActivityActionType;
   summary: string;
   details?: string;
-  actor: string; // 操作主体 ("人間", "AI社長")
+  actor: string; // 操作主体 ("人間", "AI社長", "システム")
 }
 
 export interface ProposedPlanTask {
@@ -126,4 +127,40 @@ export interface ProposedPlan {
   priority: Priority;
   dueDate?: string;
   tasks: ProposedPlanTask[];
+}
+
+// --- APIトークン利用量・料金単価管理データ型 ---
+
+export interface ApiUsageData {
+  promptTokens: number | null;
+  candidatesTokens: number | null;
+  totalTokens: number | null;
+  status: 'acquired' | 'unacquired';
+}
+
+export interface ModelPricingRate {
+  model: string;
+  currency: 'JPY' | 'USD';
+  inputPricePerMillion: number | null; // 100万トークンあたりの単価 (未設定時は null)
+  outputPricePerMillion: number | null; // 100万トークンあたりの単価 (未設定時は null)
+  updatedAt: number; // 料金表の更新日
+}
+
+export interface TokenUsageRecord {
+  id: string;
+  timestamp: number;
+  endpoint: 'chat' | 'generate-character' | 'extract-memory' | 'refine-prompt';
+  endpointName: string; // 表示用 ("AI社長チャット", "キャラクター生成", "記憶抽出", "プロンプト改善")
+  model: string; // 例: "gemini-3.8-flash"
+  status: 'acquired' | 'unacquired';
+  promptTokens: number | null;
+  candidatesTokens: number | null;
+  totalTokens: number | null;
+  rateSnapshot?: {
+    currency: 'JPY' | 'USD';
+    inputPricePerMillion: number | null;
+    outputPricePerMillion: number | null;
+    rateUpdatedAt: number;
+  };
+  estimatedCost?: number | null; // 単価未設定または未取得の場合は null
 }

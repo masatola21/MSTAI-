@@ -7,9 +7,15 @@ import {
   TaskItem,
   ApprovalItem,
   ActivityLog,
+  ModelPricingRate,
+  TokenUsageRecord,
 } from '../types';
 import { PRESET_CHARACTERS } from '../data/presets';
-import { DEFAULT_USER_PROFILE, DEFAULT_TOP_GOAL } from '../utils/storage';
+import {
+  DEFAULT_USER_PROFILE,
+  DEFAULT_TOP_GOAL,
+  DEFAULT_PRICING_RATES,
+} from '../utils/storage';
 
 interface BackupModalProps {
   isOpen: boolean;
@@ -21,6 +27,8 @@ interface BackupModalProps {
   approvals: ApprovalItem[];
   activityLogs: ActivityLog[];
   topGoal: string;
+  pricingRates: ModelPricingRate[];
+  tokenUsageRecords: TokenUsageRecord[];
   onRestoreData: (data: {
     characters: CharacterConfig[];
     userProfile: UserProfile;
@@ -29,6 +37,8 @@ interface BackupModalProps {
     approvals: ApprovalItem[];
     activityLogs: ActivityLog[];
     topGoal: string;
+    pricingRates: ModelPricingRate[];
+    tokenUsageRecords: TokenUsageRecord[];
   }) => void;
 }
 
@@ -42,6 +52,8 @@ export const BackupModal: React.FC<BackupModalProps> = ({
   approvals,
   activityLogs,
   topGoal,
+  pricingRates,
+  tokenUsageRecords,
   onRestoreData,
 }) => {
   const [copied, setCopied] = useState(false);
@@ -52,13 +64,15 @@ export const BackupModal: React.FC<BackupModalProps> = ({
 
   const currentExportJson = JSON.stringify(
     {
-      version: '2.0',
+      version: '2.1',
       exportedAt: new Date().toISOString(),
       topGoal,
       projects,
       tasks,
       approvals,
       activityLogs,
+      pricingRates,
+      tokenUsage: tokenUsageRecords,
       characters,
       userProfile,
     },
@@ -97,6 +111,12 @@ export const BackupModal: React.FC<BackupModalProps> = ({
       const restoredApprovals = Array.isArray(parsed.approvals) ? parsed.approvals : approvals;
       const restoredLogs = Array.isArray(parsed.activityLogs) ? parsed.activityLogs : activityLogs;
       const restoredGoal = parsed.topGoal || topGoal || DEFAULT_TOP_GOAL;
+      const restoredPricing = Array.isArray(parsed.pricingRates) ? parsed.pricingRates : pricingRates;
+      const restoredUsage = Array.isArray(parsed.tokenUsage)
+        ? parsed.tokenUsage
+        : Array.isArray(parsed.tokenUsageRecords)
+        ? parsed.tokenUsageRecords
+        : tokenUsageRecords;
 
       onRestoreData({
         characters: restoredChars,
@@ -106,6 +126,8 @@ export const BackupModal: React.FC<BackupModalProps> = ({
         approvals: restoredApprovals,
         activityLogs: restoredLogs,
         topGoal: restoredGoal,
+        pricingRates: restoredPricing,
+        tokenUsageRecords: restoredUsage,
       });
 
       setImportStatus('✅ データのインポートと復元に成功しました！');
@@ -132,6 +154,8 @@ export const BackupModal: React.FC<BackupModalProps> = ({
         approvals: [],
         activityLogs: [],
         topGoal: DEFAULT_TOP_GOAL,
+        pricingRates: DEFAULT_PRICING_RATES,
+        tokenUsageRecords: [],
       });
       onClose();
     }
@@ -157,7 +181,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
         {/* Export Section */}
         <div className="space-y-2">
           <label className="block text-xs font-bold text-indigo-300 uppercase tracking-wider">
-            1. 全データ（目標・PJ・タスク・承認履歴・AI設定）のエクスポート
+            1. 全データ（目標・PJ・タスク・承認履歴・単価・利用量・AI設定）のエクスポート
           </label>
           <div className="flex gap-2">
             <button
